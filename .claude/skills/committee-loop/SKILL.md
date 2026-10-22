@@ -234,6 +234,15 @@ sleep 1; tmux -L <COMMITTEE_SOCKET> send-keys -t <SESSION> Enter
 Wait ~10s, re-peek, and confirm a spinner appeared. (`resume` works as the nudge word too — the word doesn't matter.)
 
 - **Intermittent API error with NO dialog** (a bare error line at an otherwise idle prompt) — no menu to select; just send the nudge (the `C-u` → `continue` → Enter steps above).
+- **Usage-limit banner with auto-continue, NO menu** (`Usage limit reached · continuing automatically at <time> · esc to cancel`) — same nudge; don't wait for the stated time.
+- **Paused `committee-review` workflow** — the status line shows `⏸ committee-review  paused · usage limit resets at <time>` while the main agent keeps running (typically polling the workflow's output). A `continue` nudge does NOT unpause it. Queue an instruction instead and send it immediately (a message typed while the agent is busy is queued until its current tool call ends — which can be a ~10-min poll — and `ctrl+x ctrl+s` sends it now):
+  ```bash
+  tmux -L <COMMITTEE_SOCKET> send-keys -t <SESSION> C-u
+  sleep 1; tmux -L <COMMITTEE_SOCKET> send-keys -t <SESSION> -l "The committee-review workflow is paused on a usage limit, but this session is running. Do not wait. Stop polling, resume that workflow now with the Workflow tool's resumeFromRunId (completed agent calls are cached); if resume fails, re-run the same committee-review call. Then continue the iteration."
+  sleep 1; tmux -L <COMMITTEE_SOCKET> send-keys -t <SESSION> Enter
+  sleep 1; tmux -L <COMMITTEE_SOCKET> send-keys -t <SESSION> C-x; tmux -L <COMMITTEE_SOCKET> send-keys -t <SESSION> C-s
+  ```
+  Re-peek: the status line should show `◯ committee-review  ▱▱▱… 0/N` (running) instead of `⏸ … paused`.
 - **If the first nudge doesn't take** (re-peek shows no spinner), retry with **exponential backoff** — ~15s, ~30s, ~60s, ~120s … — re-sending the nudge each time until a spinner appears (space these waits with a background shell or `ScheduleWakeup` as in §2b — never a foreground `sleep`). Do NOT give up, and do NOT report the loop as rate-limited / blocked / failed.
 - **Same rule for any nested subagent, `/committee` workflow, or other session** whose pane shows the `/rate-limit-options` menu or a transient API error: never accept it at face value — always select "Stop and wait for limit to reset" (never the paid option) and nudge (with backoff). Choosing "Stop and wait for limit to reset" IS the resolution; it is never a reason to actually stop.
 
