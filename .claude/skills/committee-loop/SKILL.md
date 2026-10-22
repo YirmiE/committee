@@ -52,6 +52,9 @@ Parse one or more repo-relative file paths from the user's argument, then call `
 # repo root, so a bare `find .claude ...` would miss a repo-installed skill.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 SEARCH_ROOTS=( "$HOME/.claude" )
+# Git Bash on Windows: $HOME can differ from the Windows profile dir that holds ~/.claude.
+[ -n "${USERPROFILE:-}" ] && command -v cygpath >/dev/null 2>&1 \
+  && [ -d "$(cygpath -u "$USERPROFILE")/.claude" ] && SEARCH_ROOTS+=( "$(cygpath -u "$USERPROFILE")/.claude" )
 [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/.claude" ] && SEARCH_ROOTS+=( "$REPO_ROOT/.claude" )
 SKILL_DIR=""
 while IFS= read -r candidate; do
@@ -65,8 +68,18 @@ while IFS= read -r candidate; do
   fi
 done < <(find "${SEARCH_ROOTS[@]}" -type d -name committee-loop 2>/dev/null)
 [ -n "$SKILL_DIR" ] || { echo "committee-loop skill not found (no spawn.sh adjacent to SKILL.md)" >&2; exit 1; }
-bash "$SKILL_DIR/spawn.sh" <path1> [<path2> ...]
+echo "SKILL_DIR=$SKILL_DIR"
 ```
+
+Then, in a **separate** Bash call, invoke `spawn.sh` by the **literal** path that lookup printed (not via `$SKILL_DIR`):
+
+```bash
+bash <SKILL_DIR>/spawn.sh <path1> [<path2> ...]
+```
+
+The literal path matters: the installers add a `Bash(bash <SKILL_DIR>/spawn.sh:*)` allow rule to `~/.claude/settings.json`, and permission rules match the command text — a `$SKILL_DIR` variable never matches, so in auto mode the classifier would block the spawn (it launches a `--dangerously-skip-permissions` agent).
+
+**Windows:** run the same command from Git Bash. `spawn.sh` detects MINGW/MSYS/Cygwin and re-executes itself inside WSL (tmux has no native Windows build); the manifest then carries WSL paths and `RUNNER=wsl`. See "Windows (via WSL)" under Notes for the prerequisites and for how every later command must be wrapped.
 
 <operator_model_overrides>
 If the user's request specifies model choices for this run — e.g. *"only use opus 4.8 with xhigh and gpt 5.5 xhigh"*, *"run codex on xhigh"*, *"skip kiro and gemini"*, *"verify with opus"* — translate that into a JSON config and pass it as `--models '<json>'` (before or among the path args): `bash "$SKILL_DIR/spawn.sh" --models '<json>' <path1> ...`. Schema (every field optional; omit anything not requested):
@@ -119,7 +132,7 @@ Invalid values fail `spawn.sh` before any worktree is created.
 **Do NOT use the `using-git-worktrees` skill** — it's interactive and runs test baselines we don't need here.
 
 <manifest_format>
-The manifest is a newline-separated, %q-escaped list of `KEY=VALUE` pairs. Parse by reading the last `head` lines of stdout (or the file `$WORKTREE_PATH/.committee-loop-manifest.txt`) and extracting these keys: `SESSION`, `WORKTREE_PATH`, `BRANCH`, `ORIGIN_PATH`, `ORIGIN_REF`, `ORIGIN_GIT_DIR`, `WATCHER_SCRIPT`, `HEALTH_CHECK_SCRIPT`, `TARGET_FILES_JOINED`, `JOB_UNIT` (the job's `committee-job-<job id>.scope`; empty when unbounded), `COMMITTEE_SOCKET` (the tmux socket every `tmux -L` command below must use).
+The manifest is a newline-separated, %q-escaped list of `KEY=VALUE` pairs. Parse by reading the last `head` lines of stdout (or the file `$WORKTREE_PATH/.committee-loop-manifest.txt`) and extracting these keys: `SESSION`, `WORKTREE_PATH`, `BRANCH`, `ORIGIN_PATH`, `ORIGIN_REF`, `ORIGIN_GIT_DIR`, `WATCHER_SCRIPT`, `HEALTH_CHECK_SCRIPT`, `TARGET_FILES_JOINED`, `JOB_UNIT` (the job's `committee-job-<job id>.scope`; empty when unbounded), `COMMITTEE_SOCKET` (the tmux socket every `tmux -L` command below must use), `RUNNER` (`native`, or `wsl` when spawned from Windows — then wrap EVERY command below, as described in "Windows (via WSL)" under Notes).
 </manifest_format>
 
 ### 2. Install the status watcher AND the 4.5m health check
@@ -138,6 +151,8 @@ Bash({
   run_in_background: true
 })
 ```
+
+With `RUNNER=wsl`, the two commands become `wsl.exe -e bash -lc 'bash "<WATCHER_SCRIPT>"'` and `wsl.exe -e bash -lc 'bash "<HEALTH_CHECK_SCRIPT>"'`.
 
 Each call returns a shell ID — save both and include in the user report so the user can kill them if they cancel manually. Do NOT synchronously block on either shell; the harness delivers each exit as a notification.
 
@@ -288,3 +303,17 @@ On **no** (or a partial selection), do only what the user approved — or nothin
 - `--effort high` is the sweet spot for loop-agent discipline vs wall-time; `max` rarely pays off for single-file reviews.
 - Each ralph iteration is capped at 10; if the loop doesn't converge within that, the watcher reports `EXHAUSTED` and the worktree is preserved for inspection.
 - **Headroom/cus routing.** When `cclaude` is installed, `spawn.sh` launches the detached inner session via `cclaude`, so the loop's coordinator is Headroom-routed and cus-managed. Without `cclaude`, it falls back to `headroom wrap claude`, then bare `claude`. Codex/Kiro/Gemini stay on their native backends — a Headroom Anthropic/OpenAI proxy can't carry Kiro's AWS Q or Gemini's Cloud Code Assist traffic, and routing Codex would rewire its auth. Set `COMMITTEE_HEADROOM=off` to force bare `claude`.
+
+### Windows (via WSL)
+
+<windows_wsl>
+On Windows the loop runs inside WSL; the coordinating session stays in Git Bash. `spawn.sh` handles the hop (path translation via `wslpath`, MSYS path conversion disabled, WSL login shell so `~/.local/bin` is on PATH) and stamps `RUNNER=wsl` into the manifest.
+
+- **Wrap every follow-up command** when `RUNNER=wsl`: watcher, health check, the §2b tick, nudges, §2c dialog handling, and the §3 Monitor/Peek/Cancel lines all become `wsl.exe -e bash -lc '<command>'` (manifest paths are already `/mnt/<drive>/...`). Prefix with `MSYS_NO_PATHCONV=1` only if an argument itself starts with `/` (inside the single-quoted `-lc` string no conversion happens). `wsl: Failed to translate ...` lines on stderr are harmless PATH-translation noise.
+- **Prerequisites inside WSL** (not Windows): `tmux`, `git`, `node`, `claude`, `kiro-cli`, `codex`, `agy` — each logged in from WSL. Skip a reviewer CLI you don't have by disabling it via `--models` (`{"reviewers":{"<name>":{"enabled":false}}}`; `agy` backs both `gemini` and `gemini-pro`); `spawn.sh` only requires CLIs of enabled reviewers.
+- **codex:** if WSL's `codex` resolves to the Windows npm shim (`/mnt/c/.../npm/codex`), it fails under WSL's node. Install a Linux build inside WSL (`npm i -g @openai/codex` with a WSL-native node ≥ 18, or extract `@openai/codex@<ver>-linux-x64`'s `vendor/x86_64-unknown-linux-musl/bin/codex` onto `~/.local/bin`).
+- **One-time, by the operator:** run `claude --dangerously-skip-permissions` once inside WSL and accept the Bypass Permissions disclaimer. `spawn.sh` never auto-accepts it; it aborts with these instructions instead.
+- **Folder trust:** when origin's untracked `.claude/settings.local.json` (seeded into the worktree) pre-approves tools, Claude defaults the trust prompt to "No, exit"; `spawn.sh` moves to "Yes" before confirming.
+- **Line endings:** `.gitattributes` pins `*.sh` to LF. A clone made before that (with `core.autocrlf=true`) may still have CRLF scripts (`set: pipefail: invalid option`); re-check-out just the scripts in the committee clone with `git ls-files -z '*.sh' | xargs -0 rm -f -- && git ls-files -z --deleted | xargs -0 git checkout --`.
+- `systemd-run --user --scope` is usually unusable under WSL, so jobs run unbounded (expected `WARNING — job runs UNBOUNDED`).
+</windows_wsl>
