@@ -51,7 +51,9 @@ Parse one or more repo-relative file paths from the user's argument, then call `
 # Resolve repo root explicitly — outer agent's cwd is not guaranteed to be the
 # repo root, so a bare `find .claude ...` would miss a repo-installed skill.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-SEARCH_ROOTS=( "$HOME/.claude" )
+SEARCH_ROOTS=()
+[ -n "${CLAUDE_CONFIG_DIR:-}" ] && SEARCH_ROOTS+=( "$CLAUDE_CONFIG_DIR/skills" )
+SEARCH_ROOTS+=( "$HOME/.claude" )
 # Git Bash on Windows: $HOME can differ from the Windows profile dir that holds ~/.claude.
 [ -n "${USERPROFILE:-}" ] && command -v cygpath >/dev/null 2>&1 \
   && [ -d "$(cygpath -u "$USERPROFILE")/.claude" ] && SEARCH_ROOTS+=( "$(cygpath -u "$USERPROFILE")/.claude" )
@@ -66,7 +68,7 @@ while IFS= read -r candidate; do
     real_dir=$(dirname -- "$real")
     [ -f "$real_dir/spawn.sh" ] && { SKILL_DIR="$real_dir"; break; }
   fi
-done < <(find "${SEARCH_ROOTS[@]}" -type d -name committee-loop 2>/dev/null)
+done < <(find -H "${SEARCH_ROOTS[@]}" -type d -name committee-loop 2>/dev/null)
 [ -n "$SKILL_DIR" ] || { echo "committee-loop skill not found (no spawn.sh adjacent to SKILL.md)" >&2; exit 1; }
 echo "SKILL_DIR=$SKILL_DIR"
 ```
@@ -77,7 +79,7 @@ Then, in a **separate** Bash call, invoke `spawn.sh` by the **literal** path tha
 bash <SKILL_DIR>/spawn.sh <path1> [<path2> ...]
 ```
 
-The literal path matters: the installers add a `Bash(bash <SKILL_DIR>/spawn.sh:*)` allow rule to `~/.claude/settings.json`, and permission rules match the command text — a `$SKILL_DIR` variable never matches, so in auto mode the classifier would block the spawn (it launches a `--dangerously-skip-permissions` agent).
+The literal path matters: the installers add a `Bash(bash <SKILL_DIR>/spawn.sh:*)` allow rule to `<config dir>/settings.json`, and permission rules match the command text — a `$SKILL_DIR` variable never matches, so in auto mode the classifier would block the spawn (it launches a `--dangerously-skip-permissions` agent).
 
 **Windows:** run the same command from Git Bash. `spawn.sh` detects MINGW/MSYS/Cygwin and re-executes itself inside WSL (tmux has no native Windows build); the manifest then carries WSL paths and `RUNNER=wsl`. See "Windows (via WSL)" under Notes for the prerequisites and for how every later command must be wrapped.
 
@@ -91,7 +93,7 @@ If the user's request specifies model choices for this run — e.g. *"only use o
     "claude":     { "model": "opus", "policy": "pin" },
     "codex":      { "model": "gpt-5.5", "effort": "xhigh" },
     "kiro":       { "enabled": false },
-    "gemini":     { "model": "gemini-3.5-flash" },
+    "gemini":     { "model": "gemini-3.8-flash-high" },
     "gemini-pro": { "model": "gemini-3.1-pro-low" },
     "fable":      { "enabled": true, "model": "fable" }
   },
