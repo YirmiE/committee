@@ -81,7 +81,23 @@ case "$(uname -s 2>/dev/null)" in
       WSL_SPAWN=$(to_wsl_path "$SCRIPT_DIR/spawn.sh")
       [ -n "$WSL_CWD" ] && [ -n "$WSL_SPAWN" ] \
         || { echo "could not translate paths for WSL (wslpath failed)" >&2; exit 1; }
-      WSL_CMD="cd $(printf '%q' "$WSL_CWD") && COMMITTEE_RUNNER=wsl exec bash $(printf '%q' "$WSL_SPAWN")"
+      # wsl.exe forwards no Windows-side environment: carry the operator's COMMITTEE_*
+      # settings, and Git for Windows' system/global core.autocrlf (absent in WSL git) so
+      # the worktree's line endings match origin's checkout. A repo-local setting is
+      # visible to WSL git and must keep precedence, so it is not overridden.
+      WSL_ENV="COMMITTEE_RUNNER=wsl"
+      for name in $(compgen -v COMMITTEE_); do
+        case "$name" in COMMITTEE_RUNNER|COMMITTEE_WSL) continue ;; esac
+        WSL_ENV+=" $name=$(printf '%q' "${!name}")"
+      done
+      if ! git config --local --get core.autocrlf >/dev/null 2>&1; then
+        AUTOCRLF=$({ git config --show-scope --get-all core.autocrlf 2>/dev/null || true; } \
+          | awk -F'\t' '$1 == "system" || $1 == "global" { v = $2 } END { print v }')
+        if [ -n "$AUTOCRLF" ]; then
+          WSL_ENV+=" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=$(printf '%q' "$AUTOCRLF")"
+        fi
+      fi
+      WSL_CMD="cd $(printf '%q' "$WSL_CWD") && $WSL_ENV exec bash $(printf '%q' "$WSL_SPAWN")"
       for arg in "$@"; do WSL_CMD+=" $(printf '%q' "$arg")"; done
       MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' exec wsl.exe -e bash -lc "$WSL_CMD"
     fi ;;
@@ -172,7 +188,7 @@ if [ -n "$MODELS_JSON" ]; then
     // the inner agent maps reviewers.fable.{enabled,model} onto /committee --reviewers/--fable-model.
     const known = ["claude","codex","kiro","gemini","gemini-pro","fable"];
     for (const [k, s0] of Object.entries(rv)) {
-      if (!known.includes(k.toLowerCase())) { console.error("unknown reviewer key: " + k + " (expected one of " + known.join(", ") + ")"); process.exit(1) }
+      if (!known.includes(k)) { console.error("unknown reviewer key: " + k + " (expected one of " + known.join(", ") + ", lowercase)"); process.exit(1) }
       // NOTE: reviewers.claude.model is validated here but reaches the workflow INDIRECTLY —
       // the inner agent translates it into /committee --reviewer-model=<v> (-> reviewerModel),
       // unlike the codex/gemini/gemini-pro model keys (the gemini keys drive the agy-backed
@@ -182,6 +198,9 @@ if [ -n "$MODELS_JSON" ]; then
       if (s.enabled != null && typeof s.enabled !== "boolean") { console.error("reviewers." + k + ".enabled must be true/false"); process.exit(1) }
       if (s.policy != null && !["pin","adaptive"].includes(s.policy)) { console.error("reviewers." + k + ".policy must be \"pin\" or \"adaptive\""); process.exit(1) }
     }
+    // The inner agent ignores an empty reviewer allowlist and runs the full panel.
+    const on = (k) => k === "fable" ? (rv[k] || {}).enabled === true : (rv[k] || {}).enabled !== false;
+    if (!known.some(on)) { console.error("--models disables every reviewer; leave at least one enabled"); process.exit(1) }
     const ver = cfg.verifier || {}; chk(ver.model, "verifier.model");
     const eff = ia.effort || "high", mdl = ia.model || "";
     process.stdout.write("--effort " + eff + (mdl ? " --model " + mdl : ""));
@@ -232,7 +251,7 @@ DISABLED_REVIEWERS=""
 if [ -n "$MODELS_JSON" ]; then
   DISABLED_REVIEWERS=$(MODELS_JSON="$MODELS_JSON" node -e '
     const r = JSON.parse(process.env.MODELS_JSON).reviewers || {};
-    process.stdout.write(Object.keys(r).filter(k => r[k] && r[k].enabled === false).map(k => k.toLowerCase()).join(" "));
+    process.stdout.write(Object.keys(r).filter(k => r[k] && r[k].enabled === false).join(" "));
   ')
 fi
 reviewer_enabled() { case " $DISABLED_REVIEWERS " in *" $1 "*) return 1 ;; esac; return 0; }
@@ -522,15 +541,6 @@ for _ in $(seq 1 45); do   # wider: `headroom wrap` adds proxy-handshake latency
   if echo "$PANE" | grep -qF 'bypass permissions on'; then
     READY=true; break
   fi
-  # Claude Code shows a folder-trust prompt for unknown directories BEFORE
-  # entering the main TUI — even under --dangerously-skip-permissions. The
-  # cursor (❯) is usually pre-positioned on "Yes, I trust this folder", but when
-  # the folder pre-approves tool permissions (e.g. the origin's untracked
-  # .claude/settings.local.json seeded into the worktree) newer Claude Code
-  # defaults it to "No, exit" — a bare Enter would then quit the inner claude and
-  # abort the spawn. Move onto "Yes" first in that case (the session already runs
-  # with --dangerously-skip-permissions, so those pre-approvals grant nothing
-  # extra). Auto-answer once, then keep polling for the main TUI footer.
   # First-ever --dangerously-skip-permissions run on this machine shows a one-time
   # "Bypass Permissions mode" disclaimer. Accepting it is the operator's decision, so
   # never auto-answer it: abort (the ERR trap unwinds the worktree) with instructions.
@@ -540,13 +550,18 @@ for _ in $(seq 1 45); do   # wider: `headroom wrap` adds proxy-handshake latency
     echo "  then /exit and re-run committee-loop." >&2
     false
   fi
+  # Claude Code shows a folder-trust prompt for the new worktree BEFORE the main TUI,
+  # even under --dangerously-skip-permissions. The worktree holds the same content as
+  # the origin checkout the operator already trusts. Current Claude Code lists
+  # "No, exit" first and focuses it, and keys sent just after the dialog renders can be
+  # dropped, so move down and confirm only once the pane shows "Yes" focused.
   if ! $TRUST_DISMISSED && echo "$PANE" | grep -qF 'Yes, I trust this folder'; then
-    if echo "$PANE" | grep -qF '❯ No, exit'; then
+    if echo "$PANE" | grep -qF '❯ Yes, I trust this folder'; then
+      tmux send-keys -t "$SESSION" Enter
+      TRUST_DISMISSED=true
+    else
       tmux send-keys -t "$SESSION" Down
-      sleep 0.5
     fi
-    tmux send-keys -t "$SESSION" Enter
-    TRUST_DISMISSED=true
   fi
   sleep 1
 done

@@ -102,22 +102,34 @@ for CONFIG_DIR in "${CONFIG_DIRS[@]}"; do
   # `claude --dangerously-skip-permissions` session, which Claude Code's auto-mode
   # classifier blocks unless the exact command is allow-listed. SKILL.md invokes
   # `bash <real skill dir>/spawn.sh ...` with the literal readlink -f path, so the rule
-  # uses the physical (pwd -P) path. Stale rules for an older clone location are replaced.
+  # uses the physical (pwd -P) path. A rule for another clone is replaced once that
+  # clone's spawn.sh no longer exists.
   if [ "$ADD_PERMISSION_RULE" = 1 ]; then
     SETTINGS="$CONFIG_DIR/settings.json"
-    SPAWN_RULE="Bash(bash $(cd -- "$REPO_ROOT" && pwd -P)/.claude/skills/committee-loop/spawn.sh:*)"
+    RULE_ROOT=$(cd -- "$REPO_ROOT" && pwd -P)
+    SPAWN_RULE="Bash(bash $RULE_ROOT/.claude/skills/committee-loop/spawn.sh:*)"
+    case "$RULE_ROOT" in
+      *[[:space:]]*) echo "WARNING: $RULE_ROOT contains whitespace; a quoted spawn invocation will not match the allow rule. Prefer a clone path without spaces." >&2 ;;
+    esac
     if ! command -v node >/dev/null 2>&1; then
       echo "WARNING: node not found — add this to permissions.allow in $SETTINGS yourself:" >&2
       echo "  \"$SPAWN_RULE\"" >&2
     elif ! SETTINGS="$SETTINGS" SPAWN_RULE="$SPAWN_RULE" node -e '
         const fs = require("fs");
         const p = process.env.SETTINGS, rule = process.env.SPAWN_RULE;
-        const text = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+        const text = (fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "").replace(/^\uFEFF/, "");
         const s = text.trim() ? JSON.parse(text) : {};
-        s.permissions = s.permissions || {};
+        const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+        if (!isObj(s)) throw new Error(p + " is not a JSON object");
+        if (s.permissions == null) s.permissions = {};
+        if (!isObj(s.permissions)) throw new Error("permissions in " + p + " is not a JSON object");
         const allow = Array.isArray(s.permissions.allow) ? s.permissions.allow : [];
-        const stale = /^Bash\(bash .*\/\.claude\/skills\/committee-loop\/spawn\.sh:\*\)$/;
-        const next = allow.filter(r => r === rule || !stale.test(r));
+        const local = (f) => process.platform === "win32" ? f.replace(/^\/([A-Za-z])\//, "$1:/") : f;
+        const stale = (r) => {
+          const m = /^Bash\(bash (.*\/\.claude\/skills\/committee-loop\/spawn\.sh):\*\)$/.exec(r);
+          return m !== null && r !== rule && !fs.existsSync(local(m[1]));
+        };
+        const next = allow.filter(r => !stale(r));
         if (!next.includes(rule)) next.push(rule);
         if (JSON.stringify(next) === JSON.stringify(allow)) process.exit(0);
         s.permissions.allow = next;
