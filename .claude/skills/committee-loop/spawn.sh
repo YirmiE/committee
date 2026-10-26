@@ -198,9 +198,10 @@ if [ -n "$MODELS_JSON" ]; then
       if (s.enabled != null && typeof s.enabled !== "boolean") { console.error("reviewers." + k + ".enabled must be true/false"); process.exit(1) }
       if (s.policy != null && !["pin","adaptive"].includes(s.policy)) { console.error("reviewers." + k + ".policy must be \"pin\" or \"adaptive\""); process.exit(1) }
     }
-    // The inner agent ignores an empty reviewer allowlist and runs the full panel.
+    // /committee aborts below a 2-reviewer quorum, and iter-1 runs only claude/kiro/codex.
     const on = (k) => k === "fable" ? (rv[k] || {}).enabled === true : (rv[k] || {}).enabled !== false;
-    if (!known.some(on)) { console.error("--models disables every reviewer; leave at least one enabled"); process.exit(1) }
+    if (known.filter(on).length < 2) { console.error("--models must leave at least 2 reviewers enabled (/committee needs a quorum of 2)"); process.exit(1) }
+    if (!["claude","kiro","codex"].some(on)) { console.error("--models must leave claude, kiro or codex enabled (iter-1 runs only those)"); process.exit(1) }
     const ver = cfg.verifier || {}; chk(ver.model, "verifier.model");
     const eff = ia.effort || "high", mdl = ia.model || "";
     process.stdout.write("--effort " + eff + (mdl ? " --model " + mdl : ""));
@@ -531,6 +532,16 @@ if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
 else
   INNER_LAUNCH="env -u CLAUDE_CONFIG_DIR $INNER_LAUNCH"
 fi
+case "${GIT_CONFIG_COUNT:-}" in
+  ''|*[!0-9]*) INNER_LAUNCH="env -u GIT_CONFIG_COUNT $INNER_LAUNCH" ;;
+  *)
+    GIT_PIN="GIT_CONFIG_COUNT=$GIT_CONFIG_COUNT"
+    for ((i = 0; i < GIT_CONFIG_COUNT; i++)); do
+      key="GIT_CONFIG_KEY_$i" value="GIT_CONFIG_VALUE_$i"
+      GIT_PIN+=" $key=$(printf '%q' "${!key-}") $value=$(printf '%q' "${!value-}")"
+    done
+    INNER_LAUNCH="$GIT_PIN $INNER_LAUNCH" ;;
+esac
 tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$WORKTREE_PATH" \
   "$INNER_LAUNCH"
 

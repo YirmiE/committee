@@ -84,7 +84,7 @@ The literal path matters: the installers add a `Bash(bash <SKILL_DIR>/spawn.sh:*
 **Windows:** run the same command from Git Bash. `spawn.sh` detects MINGW/MSYS/Cygwin and re-executes itself inside WSL (tmux has no native Windows build); the manifest then carries WSL paths and `RUNNER=wsl`. See "Windows (via WSL)" under Notes for the prerequisites and for how every later command must be wrapped.
 
 <operator_model_overrides>
-If the user's request specifies model choices for this run — e.g. *"only use opus 4.8 with xhigh and gpt 5.5 xhigh"*, *"run codex on xhigh"*, *"skip kiro and gemini"*, *"verify with opus"* — translate that into a JSON config and pass it as `--models '<json>'` (before or among the path args), again by the literal printed path: `bash <SKILL_DIR>/spawn.sh --models '<json>' <path1> ...`. Reviewer keys are lowercase, and at least one reviewer must stay enabled. Schema (every field optional; omit anything not requested):
+If the user's request specifies model choices for this run — e.g. *"only use opus 4.8 with xhigh and gpt 5.5 xhigh"*, *"run codex on xhigh"*, *"skip kiro and gemini"*, *"verify with opus"* — translate that into a JSON config and pass it as `--models '<json>'` (before or among the path args), again by the literal printed path: `bash <SKILL_DIR>/spawn.sh --models '<json>' <path1> ...`. Reviewer keys are lowercase; leave at least 2 reviewers enabled (the `/committee` quorum), at least one of them `claude`, `kiro` or `codex` (iter-1 runs only those). Schema (every field optional; omit anything not requested):
 
 ```json
 {
@@ -320,7 +320,13 @@ On **no** (or a partial selection), do only what the user approved — or nothin
 <windows_wsl>
 On Windows the loop runs inside WSL; the coordinating session stays in Git Bash. `spawn.sh` handles the hop (path translation via `wslpath`, MSYS path conversion disabled, WSL login shell so `~/.local/bin` is on PATH) and stamps `RUNNER=wsl` into the manifest.
 
-- **Wrap every follow-up command** when `RUNNER=wsl`: watcher, health check, the §2b tick, nudges, §2c dialog handling, and the §3 Monitor/Peek/Cancel lines all become `wsl.exe -e bash -lc '<command>'` (manifest paths are already `/mnt/<drive>/...`). Prefix with `MSYS_NO_PATHCONV=1` only if an argument itself starts with `/` (inside the single-quoted `-lc` string no conversion happens). `wsl: Failed to translate ...` lines on stderr are harmless PATH-translation noise.
+- **Wrap every follow-up command** when `RUNNER=wsl`: watcher, health check, the §2b tick, nudges, §2c dialog handling, and the §3 Monitor/Peek/Cancel lines run inside WSL (manifest paths are already `/mnt/<drive>/...`). A one-line command without single quotes becomes `wsl.exe -e bash -lc '<command>'`. A command that contains single quotes or spans lines (the §2b tick, the §2c nudges) must go on stdin instead, so no quoting applies:
+  ```bash
+  wsl.exe -e bash -ls <<'WSL'
+  <command, verbatim>
+  WSL
+  ```
+  Prefix `wsl.exe` with `MSYS_NO_PATHCONV=1` only if an argument itself starts with `/` (inside the single-quoted `-lc` string or the heredoc no conversion happens). `wsl: Failed to translate ...` lines on stderr are harmless PATH-translation noise.
 - **Prerequisites inside WSL** (not Windows): `tmux`, `git`, `node`, `claude`, `kiro-cli`, `codex`, `agy` — each logged in from WSL. `spawn.sh` preflights WSL's own `~/.claude` and git config, so also, inside WSL: clone this repo and run `./install.sh`, install the `ralph-loop` and `superpowers` plugins in WSL's Claude Code, and set `git config --global user.name` / `user.email`. Skip a reviewer CLI you don't have by disabling it via `--models` (`{"reviewers":{"<name>":{"enabled":false}}}`; `agy` backs both `gemini` and `gemini-pro`); `spawn.sh` only requires CLIs of enabled reviewers.
 - **codex:** if WSL's `codex` resolves to the Windows npm shim (`/mnt/c/.../npm/codex`), it fails under WSL's node. Install a Linux build inside WSL (`npm i -g @openai/codex` with a WSL-native node ≥ 18, or extract `@openai/codex@<ver>-linux-x64`'s `vendor/x86_64-unknown-linux-musl/bin/codex` onto `~/.local/bin`).
 - **One-time, by the operator:** run `claude --dangerously-skip-permissions` once inside WSL and accept the Bypass Permissions disclaimer. `spawn.sh` never auto-accepts it; it aborts with these instructions instead.

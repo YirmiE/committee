@@ -36,6 +36,7 @@ cat > "$TMP/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 [ "${1:-}" = --help ] && { echo "  --effort <level>"; exit 0; }
 mode=$(cat "$HOME/stub-mode" 2>/dev/null || echo ready)
+echo "${GIT_CONFIG_COUNT-unset} $(git config --get core.autocrlf || echo none)" > .stub-git-env
 log="$HOME/stub-keys.log"
 ready() {
   stty sane 2>/dev/null
@@ -159,10 +160,20 @@ GIT_CONFIG_GLOBAL="$TMP/wingit" run ready "$TMP/winbin:$P_ALL" "$TMP/m10" docs/h
 grep -q 'GIT_CONFIG_' "$HOME/wsl-cmd"; check "$?" 1 "repo-local core.autocrlf keeps precedence (not overridden)"
 git -C "$ORIGIN" config --unset core.autocrlf
 
+# 7b. a job started on a server another job created gets its own git overrides, not the server's
+GIT_CONFIG_GLOBAL="$TMP/wingit" run ready "$TMP/winbin:$P_ALL" "$TMP/m14" docs/a.md
+echo ready > "$HOME/stub-mode"
+(cd "$ORIGIN" && GIT_CONFIG_COUNT=0 PATH="$P_ALL" bash "$SPAWN" docs/b.md) > "$TMP/m15" 2> "$TMP/m15.err"
+check "$?" 0 "second job spawned on the running tmux server"
+check "$(cat "$(mval "$TMP/m14" WORKTREE_PATH)/.stub-git-env")" "1 true" "hop job's inner claude sees the host core.autocrlf"
+check "$(cat "$(mval "$TMP/m15" WORKTREE_PATH)/.stub-git-env")" "0 none" "second job on that server gets its own git overrides, not the first job's"
+
 # 8. --models validation
 run ready "$P_ALL" "$TMP/m11" --models '{"reviewers":{"KIRO":{"enabled":false}}}' docs/h.md; check "$?" 1 "non-lowercase reviewer key rejected"
 run ready "$P_ALL" "$TMP/m12" --models '{"reviewers":{"claude":{"enabled":false},"codex":{"enabled":false},"kiro":{"enabled":false},"gemini":{"enabled":false},"gemini-pro":{"enabled":false}}}' docs/h.md; check "$?" 1 "--models disabling every reviewer rejected"
-run ready "$P_ALL" "$TMP/m13" --models '{"reviewers":{"claude":{"enabled":false},"codex":{"enabled":false},"kiro":{"enabled":false},"gemini":{"enabled":false},"gemini-pro":{"enabled":false},"fable":{"enabled":true}}}' docs/h.md; check "$?" 0 "--models with only fable enabled accepted"
+run ready "$P_ALL" "$TMP/m13" --models '{"reviewers":{"claude":{"enabled":false},"codex":{"enabled":false},"kiro":{"enabled":false},"gemini":{"enabled":false},"gemini-pro":{"enabled":false},"fable":{"enabled":true}}}' docs/h.md; check "$?" 1 "--models with only fable enabled rejected (no quorum, no iter-1 reviewer)"
+run ready "$P_ALL" "$TMP/m16" --models '{"reviewers":{"claude":{"enabled":false},"codex":{"enabled":false},"kiro":{"enabled":false}}}' docs/h.md; check "$?" 1 "--models leaving only gemini reviewers rejected (no iter-1 reviewer)"
+run ready "$P_ALL" "$TMP/m17" --models '{"reviewers":{"codex":{"enabled":false},"kiro":{"enabled":false},"gemini-pro":{"enabled":false}}}' docs/h.md; check "$?" 0 "--models with claude + gemini accepted"
 
 [ "$fail" = 0 ] && note "ALL WSL-SMOKE CHECKS PASSED" || note "WSL-SMOKE CHECKS FAILED"
 exit "$fail"

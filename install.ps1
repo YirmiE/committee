@@ -14,8 +14,9 @@
   Targets: each -ConfigDir (must exist), else $env:CLAUDE_CONFIG_DIR, else ~/.claude.
   Re-running is safe - existing links are replaced in place.
 
-  Symlinks on Windows require either Developer Mode (Settings > System > For developers)
-  or an elevated (Administrator) PowerShell. The prompts/ directory falls back to a
+  Symlinks on Windows require an elevated (Administrator) PowerShell, or PowerShell 7+
+  (pwsh) with Developer Mode on (Settings > System > For developers); Windows PowerShell 5.1
+  needs elevation even in Developer Mode. The prompts/ directory falls back to a
   directory junction (no privilege needed); the SKILL.md / workflow file links cannot
   fall back, because committee-loop resolves its helper scripts via `readlink -f` on the
   SKILL.md symlink - a copy would silently break that lookup.
@@ -134,8 +135,8 @@ function New-SafeSymlink([string]$Source, [string]$Target) {
     if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
       [Console]::Error.WriteLine("install.ps1: could not create symlink $Target -> $Source")
       [Console]::Error.WriteLine("  $($symlinkError.Exception.Message)")
-      [Console]::Error.WriteLine("  Enable Developer Mode (Settings > System > For developers) or re-run from an")
-      [Console]::Error.WriteLine("  elevated PowerShell. A file copy is NOT used as a fallback: committee-loop resolves")
+      [Console]::Error.WriteLine("  Re-run from an elevated PowerShell, or with PowerShell 7+ (pwsh) and Developer Mode on")
+      [Console]::Error.WriteLine("  (Windows PowerShell 5.1 needs elevation even in Developer Mode). A file copy is NOT used as a fallback: committee-loop resolves")
       [Console]::Error.WriteLine("  its helper scripts through the SKILL.md symlink.")
       exit 1
     }
