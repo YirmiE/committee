@@ -52,7 +52,10 @@ Parse one or more repo-relative file paths from the user's argument, then call `
 # repo root, so a bare `find .claude ...` would miss a repo-installed skill.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 SEARCH_ROOTS=()
-[ -n "${CLAUDE_CONFIG_DIR:-}" ] && SEARCH_ROOTS+=( "$CLAUDE_CONFIG_DIR/skills" )
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}"
+# Git Bash on Windows: a CLAUDE_CONFIG_DIR set in Windows arrives as C:\...; find needs the POSIX form.
+case "$CONFIG_DIR" in [A-Za-z]:*) command -v cygpath >/dev/null 2>&1 && CONFIG_DIR=$(cygpath -u "$CONFIG_DIR") ;; esac
+[ -n "$CONFIG_DIR" ] && SEARCH_ROOTS+=( "$CONFIG_DIR/skills" )
 SEARCH_ROOTS+=( "$HOME/.claude" )
 # Git Bash on Windows: $HOME can differ from the Windows profile dir that holds ~/.claude.
 [ -n "${USERPROFILE:-}" ] && command -v cygpath >/dev/null 2>&1 \
