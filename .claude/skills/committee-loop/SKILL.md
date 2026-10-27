@@ -53,8 +53,8 @@ Parse one or more repo-relative file paths from the user's argument, then call `
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 SEARCH_ROOTS=()
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-}"
-# Git Bash on Windows: a CLAUDE_CONFIG_DIR set in Windows arrives as C:\...; find needs the POSIX form.
-case "$CONFIG_DIR" in [A-Za-z]:*) command -v cygpath >/dev/null 2>&1 && CONFIG_DIR=$(cygpath -u "$CONFIG_DIR") ;; esac
+# Git Bash on Windows: a CLAUDE_CONFIG_DIR set in Windows arrives as C:\... or \\server\...; find needs the POSIX form.
+case "$CONFIG_DIR" in [A-Za-z]:*|*\\*) command -v cygpath >/dev/null 2>&1 && CONFIG_DIR=$(cygpath -u "$CONFIG_DIR") ;; esac
 [ -n "$CONFIG_DIR" ] && SEARCH_ROOTS+=( "$CONFIG_DIR/skills" )
 SEARCH_ROOTS+=( "$HOME/.claude" )
 # Git Bash on Windows: $HOME can differ from the Windows profile dir that holds ~/.claude.
@@ -63,13 +63,14 @@ SEARCH_ROOTS+=( "$HOME/.claude" )
 [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/.claude" ] && SEARCH_ROOTS+=( "$REPO_ROOT/.claude" )
 SKILL_DIR=""
 while IFS= read -r candidate; do
-  if [ -f "$candidate/spawn.sh" ]; then
-    SKILL_DIR="$candidate"; break
-  fi
+  # The SKILL.md symlink target wins over a stale spawn.sh left beside it by an old copy install.
   real=$(readlink -f -- "$candidate/SKILL.md" 2>/dev/null || true)
   if [ -n "$real" ]; then
     real_dir=$(dirname -- "$real")
     [ -f "$real_dir/spawn.sh" ] && { SKILL_DIR="$real_dir"; break; }
+  fi
+  if [ -f "$candidate/spawn.sh" ]; then
+    SKILL_DIR="$candidate"; break
   fi
 done < <(find -H "${SEARCH_ROOTS[@]}" -type d -name committee-loop 2>/dev/null)
 [ -n "$SKILL_DIR" ] || { echo "committee-loop skill not found (no spawn.sh adjacent to SKILL.md)" >&2; exit 1; }
