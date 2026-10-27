@@ -74,6 +74,14 @@ case "$(uname -s 2>/dev/null)" in
         echo "Install WSL (wsl --install) with tmux, git, node, claude, kiro-cli, codex and agy inside it." >&2
         exit 1
       }
+      # A linked worktree made by Git for Windows points at its git dir with a drive path
+      # (gitdir: C:/...) that WSL git cannot open.
+      WIN_TOP=$(git rev-parse --show-toplevel 2>/dev/null || true)
+      if [ -n "$WIN_TOP" ] && [ -f "$WIN_TOP/.git" ] && grep -qE '^gitdir: [A-Za-z]:' "$WIN_TOP/.git"; then
+        echo "committee-loop: $WIN_TOP is a linked worktree created by Git for Windows; WSL git cannot open its gitdir." >&2
+        echo "  Run committee-loop from the primary checkout, or from a worktree created inside WSL (git worktree add in WSL)." >&2
+        exit 1
+      fi
       to_wsl_path() {
         MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' wsl.exe -e wslpath -a "$(cygpath -w "$1")" | tr -d '\r'
       }

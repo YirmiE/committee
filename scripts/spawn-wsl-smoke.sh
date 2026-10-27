@@ -168,6 +168,17 @@ check "$?" 0 "second job spawned on the running tmux server"
 check "$(cat "$(mval "$TMP/m14" WORKTREE_PATH)/.stub-git-env")" "1 true" "hop job's inner claude sees the host core.autocrlf"
 check "$(cat "$(mval "$TMP/m15" WORKTREE_PATH)/.stub-git-env")" "0 none" "second job on that server gets its own git overrides, not the first job's"
 
+# 7c. a Git-for-Windows linked worktree (gitdir: C:/...) is rejected before the hop
+git -C "$ORIGIN" worktree add -q "$TMP/winwt" -b winwt
+printf 'gitdir: C:/Users/me/origin/.git/worktrees/winwt\n' > "$TMP/winwt/.git.win"
+mv "$TMP/winwt/.git" "$TMP/winwt/.git.real"; mv "$TMP/winwt/.git.win" "$TMP/winwt/.git"
+rm -f "$HOME/wsl-cmd"; echo ready > "$HOME/stub-mode"
+(cd "$TMP/winwt" && GIT_DIR="$TMP/winwt/.git.real" GIT_WORK_TREE="$TMP/winwt" PATH="$TMP/winbin:$P_ALL" bash "$SPAWN" docs/a.md) > "$TMP/m18" 2> "$TMP/m18.err"
+check "$?" 1 "Git-for-Windows linked worktree rejected"
+grep -q 'linked worktree created by Git for Windows' "$TMP/m18.err"; check "$?" 0 "rejection explains the primary-checkout / WSL-worktree alternative"
+check "$([ -e "$HOME/wsl-cmd" ] && echo hopped || echo none)" none "no WSL hop attempted for it"
+mv "$TMP/winwt/.git.real" "$TMP/winwt/.git"
+
 # 8. --models validation
 run ready "$P_ALL" "$TMP/m11" --models '{"reviewers":{"KIRO":{"enabled":false}}}' docs/h.md; check "$?" 1 "non-lowercase reviewer key rejected"
 run ready "$P_ALL" "$TMP/m12" --models '{"reviewers":{"claude":{"enabled":false},"codex":{"enabled":false},"kiro":{"enabled":false},"gemini":{"enabled":false},"gemini-pro":{"enabled":false}}}' docs/h.md; check "$?" 1 "--models disabling every reviewer rejected"
