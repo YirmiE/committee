@@ -160,8 +160,8 @@ if (-not $NoPermissionRule) {
   if ($RepoRoot -match '^([A-Za-z]):\\(.*)$') {
     $msysRoot = '/' + $Matches[1].ToLower() + '/' + ($Matches[2] -replace '\\', '/')
     $rule = "Bash(bash $msysRoot/.claude/skills/committee-loop/spawn.sh:*)"
-    if ($msysRoot -match '\s') {
-      Write-Warning "$RepoRoot contains whitespace; a quoted spawn invocation will not match the allow rule. Prefer a clone path without spaces."
+    if ($msysRoot -match '[^A-Za-z0-9._/+@:-]') {
+      Write-Warning "$RepoRoot contains characters bash cannot take unquoted; the spawn invocation will not match the allow rule. Use a clone path of letters, digits and . _ - + @ : / only."
     }
   } else {
     Write-Warning "Repo path $RepoRoot is not a drive-letter path; add `"Bash(bash <repo>/.claude/skills/committee-loop/spawn.sh:*)`" (Git Bash path form) to permissions.allow in each config dir's settings.json yourself."

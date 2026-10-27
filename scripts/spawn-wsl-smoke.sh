@@ -159,6 +159,10 @@ git -C "$ORIGIN" config core.autocrlf false
 GIT_CONFIG_GLOBAL="$TMP/wingit" run ready "$TMP/winbin:$P_ALL" "$TMP/m10" docs/h.md; check "$?" 0 "hop with repo-local core.autocrlf=false"
 grep -q 'GIT_CONFIG_' "$HOME/wsl-cmd"; check "$?" 1 "repo-local core.autocrlf keeps precedence (not overridden)"
 git -C "$ORIGIN" config --unset core.autocrlf
+git -C "$ORIGIN" config extensions.worktreeConfig true; git -C "$ORIGIN" config --worktree core.autocrlf false
+GIT_CONFIG_GLOBAL="$TMP/wingit" run ready "$TMP/winbin:$P_ALL" "$TMP/m19" docs/h.md; check "$?" 0 "hop with worktree-scoped core.autocrlf=false"
+grep -q 'GIT_CONFIG_' "$HOME/wsl-cmd"; check "$?" 1 "worktree-scoped core.autocrlf keeps precedence (not overridden)"
+git -C "$ORIGIN" config --worktree --unset core.autocrlf; git -C "$ORIGIN" config --unset extensions.worktreeConfig
 
 # 7b. a job started on a server another job created gets its own git overrides, not the server's
 GIT_CONFIG_GLOBAL="$TMP/wingit" run ready "$TMP/winbin:$P_ALL" "$TMP/m14" docs/a.md

@@ -109,7 +109,7 @@ for CONFIG_DIR in "${CONFIG_DIRS[@]}"; do
     RULE_ROOT=$(cd -- "$REPO_ROOT" && pwd -P)
     SPAWN_RULE="Bash(bash $RULE_ROOT/.claude/skills/committee-loop/spawn.sh:*)"
     case "$RULE_ROOT" in
-      *[[:space:]]*) echo "WARNING: $RULE_ROOT contains whitespace; a quoted spawn invocation will not match the allow rule. Prefer a clone path without spaces." >&2 ;;
+      *[!A-Za-z0-9._/+@:-]*) echo "WARNING: $RULE_ROOT contains characters bash cannot take unquoted; the spawn invocation will not match the allow rule. Use a clone path of letters, digits and . _ - + @ : / only." >&2 ;;
     esac
     if ! command -v node >/dev/null 2>&1; then
       echo "WARNING: node not found — add this to permissions.allow in $SETTINGS yourself:" >&2

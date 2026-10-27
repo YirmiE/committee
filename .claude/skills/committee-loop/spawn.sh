@@ -91,20 +91,18 @@ case "$(uname -s 2>/dev/null)" in
         || { echo "could not translate paths for WSL (wslpath failed)" >&2; exit 1; }
       # wsl.exe forwards no Windows-side environment: carry the operator's COMMITTEE_*
       # settings, and Git for Windows' system/global core.autocrlf (absent in WSL git) so
-      # the worktree's line endings match origin's checkout. A repo-local setting is
-      # visible to WSL git and must keep precedence, so it is not overridden.
+      # the worktree's line endings match origin's checkout. A repo or worktree setting is
+      # visible to WSL git and must keep precedence, so only a system/global value is carried.
       WSL_ENV="COMMITTEE_RUNNER=wsl"
       for name in $(compgen -v COMMITTEE_); do
         case "$name" in COMMITTEE_RUNNER|COMMITTEE_WSL) continue ;; esac
         WSL_ENV+=" $name=$(printf '%q' "${!name}")"
       done
-      if ! git config --local --get core.autocrlf >/dev/null 2>&1; then
-        AUTOCRLF=$({ git config --show-scope --get-all core.autocrlf 2>/dev/null || true; } \
-          | awk -F'\t' '$1 == "system" || $1 == "global" { v = $2 } END { print v }')
-        if [ -n "$AUTOCRLF" ]; then
-          WSL_ENV+=" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=$(printf '%q' "$AUTOCRLF")"
-        fi
-      fi
+      AUTOCRLF=$(git config --show-scope --get core.autocrlf 2>/dev/null || true)
+      case "$AUTOCRLF" in
+        system$'\t'*|global$'\t'*)
+          WSL_ENV+=" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=$(printf '%q' "${AUTOCRLF#*$'\t'}")" ;;
+      esac
       WSL_CMD="cd $(printf '%q' "$WSL_CWD") && $WSL_ENV exec bash $(printf '%q' "$WSL_SPAWN")"
       for arg in "$@"; do WSL_CMD+=" $(printf '%q' "$arg")"; done
       MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' exec wsl.exe -e bash -lc "$WSL_CMD"
